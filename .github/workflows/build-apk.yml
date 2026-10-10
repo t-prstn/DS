@@ -1,0 +1,66 @@
+name: Build DS Pocket APK
+
+# Runs every time something is pushed/uploaded to the repo, or when started by hand
+# from the Actions tab. Works whether the repo holds the project folder itself or
+# just the project .zip file.
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # lets the last step publish the APK as a release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unpack the project if it was uploaded as a .zip
+        run: |
+          if [ ! -f settings.gradle.kts ] && ls ./*.zip >/dev/null 2>&1; then
+            mkdir -p unpacked
+            for z in ./*.zip; do unzip -q -o "$z" -d unpacked; done
+          fi
+
+      - name: Locate the Gradle project
+        id: locate
+        run: |
+          settings=$(find . -name settings.gradle.kts -not -path './.git/*' | head -n 1)
+          if [ -z "$settings" ]; then
+            echo "No settings.gradle.kts found. Upload the project .zip (or the project files) to the repo."
+            exit 1
+          fi
+          echo "dir=$(dirname "$settings")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build the debug APK
+        working-directory: ${{ steps.locate.outputs.dir }}
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Name the APK
+        env:
+          PROJECT_DIR: ${{ steps.locate.outputs.dir }}
+        run: cp "$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk" DSPocket.apk
+
+      - name: Keep a copy on the run page
+        uses: actions/upload-artifact@v4
+        with:
+          name: DSPocket-apk
+          path: DSPocket.apk
+
+      - name: Publish a release with the APK (easiest download on a phone)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: DS Pocket build ${{ github.run_number }}
+          files: DSPocket.apk
